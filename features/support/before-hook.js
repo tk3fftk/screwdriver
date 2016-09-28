@@ -8,9 +8,9 @@ const config = require('../../.func_config');
 function beforeHooks() {
     // eslint-disable-next-line new-cap
     this.Before((scenario, cb) => {
-        this.username = config.username;
-        this.github_token = config.github_token;
-        this.jwt = config.jwt;
+        this.accessKey = config.access_key || process.env.ACCESS_KEY;
+        this.username = config.username || process.env.USER_NAME;
+        this.github_token = config.github_token || process.env.ACCESS_TOKEN;
         cb();
     });
 }
