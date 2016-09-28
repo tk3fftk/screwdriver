@@ -74,8 +74,8 @@ function createBranch(token, branchName, repositoryOwner, repositoryName) {
 function createFile(token, branch, repositoryOwner, repositoryName) {
     const content = new Buffer(randomString(MAX_CONTENT_LENGTH));
     const filename = randomString(MAX_FILENAME_LENGTH);
-    const repo = repositoryName || 'garbage-repository-ignore-this';
-    const user = repositoryOwner || 'screwdriver-cd';
+    const repo = repositoryName;
+    const user = repositoryOwner;
 
     github.authenticate({
         type: 'oauth',
@@ -115,6 +115,8 @@ function promiseToWait(timeToWait) {
 function searchForBuild(screwdriverInstance, desiredSha, pageNumber) {
     const pageCounter = pageNumber || 1;
 
+    console.log('    (...searching for build...)');
+
     return request({
         json: true,
         method: 'GET',
@@ -125,6 +127,7 @@ function searchForBuild(screwdriverInstance, desiredSha, pageNumber) {
         const result = buildData.filter((build) => build.sha === desiredSha);
 
         if (buildData.length === MAX_PAGE_COUNT) {
+            console.log('    (...looking for more builds...)');
             return searchForBuild(screwdriverInstance, desiredSha, pageCounter + 1)
             .then((nextPage) => result.concat(nextPage));
         }
@@ -154,6 +157,30 @@ function waitForBuild(screwdriverInstance, desiredSha) {
     });
 }
 
+/**
+ * [cleanUpRepository description]
+ * @method cleanUpRepository
+ * @param  {[type]}          orgName     [description]
+ * @param  {[type]}          repoName    [description]
+ * @param  {[type]}          testBranch  [description]
+ * @return {[type]}                      [description]
+ */
+function cleanUpRepository(orgName, repoName, testBranchName) {
+    const branchParams = {
+        user: orgName,
+        repo: repoName,
+        ref: `heads/${testBranchName}`
+    };
+
+    return github.gitdata.getReference(branchParams)
+        .then((response) => {
+            console.log(response);
+
+            return github.gitdata.deleteReference(branchParams);
+        }, () => {})
+        .then(() => {});
+}
+
 module.exports = function server() {
     // eslint-disable-next-line new-cap
     this.Before(() => {
@@ -162,13 +189,7 @@ module.exports = function server() {
         this.repoOrg = 'screwdriver-cd-test';
         this.repoName = 'functional-git';
 
-        const params = {
-            user: this.repoOrg,
-            repo: this.repoName,
-            ref: `heads/${this.testBranch}`
-        };
-
-        // PR creation requires authentication
+        // Github operations require
         github.authenticate({
             type: 'oauth',
             token: this.github_token
@@ -181,13 +202,9 @@ module.exports = function server() {
             json: true
         }).then((response) => {
             this.jwt = response.body.token;
-        }).then(() => {
-            // Clean up should happen here
-            console.log();
-
-            return github.gitdata.getReference(params)
-                .then(() => github.gitdata.deleteReference(params), () => {});
-        });
+        }).then(() =>
+            cleanUpRepository(this.repoOrg, this.repoName, this.branchName)
+        );
     });
 
     this.Given(/^an existing pipeline$/, () =>
@@ -221,8 +238,8 @@ module.exports = function server() {
             token
         });
 
-        return createBranch(token, branchName)
-            .then(() => createFile(token, branchName))
+        return createBranch(token, branchName, this.repoOrg, this.repoName)
+            .then(() => createFile(token, branchName, this.repoOrg, this.repoName))
             .then(() => github.pullRequests.create({
                 user: this.repositoryOwner,
                 repo: this.repository,
@@ -241,8 +258,8 @@ module.exports = function server() {
         const branchName = this.branchName;
         const token = this.github_token;
 
-        return createBranch(token, branchName)
-            .then(() => createFile(token, branchName))
+        return createBranch(token, branchName, this.repoOrg, this.repoName)
+            .then(() => createFile(token, branchName, this.repoOrg, this.repoName))
             .then(() =>
                 github.pullRequests.create({
                     user: this.repoOrg,
