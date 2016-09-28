@@ -157,13 +157,14 @@ function waitForBuild(screwdriverInstance, desiredSha) {
 module.exports = function server() {
     // eslint-disable-next-line new-cap
     this.Before(() => {
-        this.instance = 'http://api.screwdriver.cd';
-        this.repositoryOwner = 'screwdriver-cd';
-        this.repository = 'garbage-repository-ignore-this';
-        this.testBranch = 'testBranch';
+        this.instance = 'https://api.screwdriver.cd';
+        this.branchName = 'testBranch';
+        this.repoOrg = 'screwdriver-cd-test';
+        this.repoName = 'functional-git';
+
         const params = {
-            user: this.repositoryOwner,
-            repo: this.repository,
+            user: this.repoOrg,
+            repo: this.repoName,
             ref: `heads/${this.testBranch}`
         };
 
@@ -173,21 +174,32 @@ module.exports = function server() {
             token: this.github_token
         });
 
-        return github.gitdata.getReference(params)
-            // If branch exists, delete it
-            .then(() => github.gitdata.deleteReference(params), () => {});
+        return request({  // TODO : perform this in the before-hook for all func tests
+            method: 'GET',
+            url: `${this.instance}/v4/auth/token?access_key=${this.accessKey}`,
+            followAllRedirects: true,
+            json: true
+        }).then((response) => {
+            this.jwt = response.body.token;
+        }).then(() => {
+            // Clean up should happen here
+            console.log();
+
+            return github.gitdata.getReference(params)
+                .then(() => github.gitdata.deleteReference(params), () => {});
+        });
     });
 
-    this.Given(/^an existing pipeline$/, () => {
+    this.Given(/^an existing pipeline$/, () =>
         request({
             uri: `${this.instance}/v4/pipelines`,
             method: 'POST',
             auth: {
-                username: this.username,
+                user: this.username,
                 bearer: this.jwt
             },
             body: {
-                scmUrl: 'git@github.com:screwdriver-cd/garbage-repository-ignore-this.git#master'
+                scmUrl: `git@github.com:${this.repoOrg}/${this.repoName}.git#master`
             },
             json: true
         }).then((response) => {
@@ -196,8 +208,8 @@ module.exports = function server() {
             }
 
             Assert.oneOf(response.statusCode, [409, 201]);
-        });
-    });
+        })
+    );
 
     this.Given(/^an existing pull request targeting the pipeline's branch$/, () => {
         const branchName = this.testBranch;
@@ -226,15 +238,15 @@ module.exports = function server() {
     });
 
     this.When(/^a pull request is opened$/, () => {
-        const branchName = this.testBranch;
+        const branchName = this.branchName;
         const token = this.github_token;
 
         return createBranch(token, branchName)
             .then(() => createFile(token, branchName))
             .then(() =>
                 github.pullRequests.create({
-                    user: this.repositoryOwner,
-                    repo: this.repository,
+                    user: this.repoOrg,
+                    repo: this.repoName,
                     title: '[DNM] testing',
                     head: branchName,
                     base: 'master'
@@ -277,7 +289,7 @@ module.exports = function server() {
 
     this.Then(/^a new build from `main` should be created to test that change$/, {
         timeout: 60 * 1000
-    }, () => promiseToWait(10)
+    }, () => promiseToWait(8)
         .then(() => waitForBuild(this.instance, this.sha))
         .then((data) => {
             const build = data[0];
