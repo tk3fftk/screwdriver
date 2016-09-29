@@ -81,8 +81,6 @@ function createFile(token, branch, repositoryOwner, repositoryName) {
         token
     });
 
-    console.log('content: ', content.toString('base64'));
-
     return github.repos.createFile({
         user,
         repo,
@@ -124,12 +122,7 @@ function searchForBuild(instance, pipelineId, pullRequestNumber) {
     .then((response) => {
         const jobData = response.body;
         const result = jobData.filter((job) => job.name === `PR-${pullRequestNumber}`);
-<<<<<<< HEAD
 
-        console.log('result: ', result);
-
-=======
->>>>>>> 3f772f6dc471f82ccdd8869295e878fa1de3f806
         const jobId = result[0].id;
 
         return request({
@@ -154,14 +147,49 @@ function waitForBuild(instance, pipelineId, pullRequestNumber) {
     return searchForBuild(instance, pipelineId, pullRequestNumber)
     .then((buildData) => {
         if (buildData.length !== 0) {
-            console.log('buildData: ', buildData);
-
             return buildData;
         }
         console.log('   (Searching for MOAR builds...)');
 
         return promiseToWait(3)
             .then(() => searchForBuild(instance, pipelineId, pullRequestNumber));
+    });
+}
+
+/**
+ * Look for a specific build. Wait until the build reaches the desired status
+ * @method waitForBuildAndStatus
+ * @return {[type]}              [description]
+ */
+function waitForBuildAndStatus(config) {
+    const desiredSha = config.sha;
+    const desiredStatus = config.desiredStatus;
+
+    return searchForBuild(config.instance, config.pipelineId, config.pullRequestNumber)
+    .then((buildData) => {
+        if (buildData.length !== 0) {
+            if (!desiredSha) {  // default is the first one
+                return buildData.body[0];
+            }
+
+            let chosenBuild = -1;
+
+            buildData.body.forEach((singleBuild, index) => {
+                if (singleBuild.sha === desiredSha && desiredStatus.includes(singleBuild.status)) {
+                    chosenBuild = index;
+                }
+            });
+
+            if (chosenBuild >= 0) {
+                return buildData.body[chosenBuild];
+            }
+        }
+
+        console.log('   (Searching through MOAR builds...)');
+
+        return promiseToWait(3)
+        .then(() => searchForBuild(config.instance, config.pipelineId, config.pullRequestNumber))
+        .then(() => waitForBuildAndStatus(config));
     });
 }
 
@@ -298,7 +326,7 @@ module.exports = function server() {
     });
 
     this.When(/^new changes are pushed to that pull request$/, () => {
-        console.log('meow!');
+        console.log();
 
         return createFile(this.github_token, this.branchName, this.repoOrg, this.repoName);
     });
@@ -336,20 +364,25 @@ module.exports = function server() {
         })
     );
 
-    this.Then(/^any existing builds should be stopped$/, { timeout: 20 * 1000 }, () =>
-        promiseToWait(10)
-        .then(() => waitForBuild(this.instance, this.pipelineId, this.pullRequestNumber))
-        .then((data) => {
-            let build = data.body[0];
+    this.Then(/^any existing builds should be stopped$/, {
+        timeout: 60 * 1000
+    }, () => {
+        const desiredStatus = ['ABORTED', 'SUCCESS'];
 
-            if (this.sha) {
-                build = data.body[1];
-                console.log('old sha: ', this.sha);
-            }
+        return promiseToWait(10)
+        .then(() => waitForBuildAndStatus({
+            instance: this.instance,
+            pipelineId: this.pipelineId,
+            pullRequestNumber: this.pullRequestNumber,
+            sha: this.sha,
+            desiredStatus
+        }))
+        .then((buildData) => {
+            // TODO: save the status so the next step can verify the github status
 
-            Assert.oneOf(build.status, ['ABORTED', 'SUCCESS']);
-        })
-    );
+            Assert.oneOf(buildData.status, desiredStatus);
+        });
+    });
 
     this.Then(/^the GitHub status should be updated to reflect the build's status$/, () =>
         github.repos.getCombinedStatus({
