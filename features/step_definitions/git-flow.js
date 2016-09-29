@@ -6,7 +6,6 @@ const request = require('../support/request');
 
 const MAX_CONTENT_LENGTH = 354;
 const MAX_FILENAME_LENGTH = 17;
-const MAX_PAGE_COUNT = 50;
 
 /**
  * Creates a string of a given length with random alphanumeric characters
@@ -171,22 +170,19 @@ function cleanUpRepository(orgName, repoName, testBranchName) {
     };
 
     return github.gitdata.getReference(branchParams)
-        .then((response) => {
-            console.log(response);
-
-            return github.gitdata.deleteReference(branchParams);
-        }, () => {})
-        .then(() => {});
+        .then(() => github.gitdata.deleteReference(branchParams), () => {});
 }
 
 module.exports = function server() {
     // eslint-disable-next-line new-cap
-    this.Before(() => {
+    this.Before({
+        tags: ['@gitflow']
+    }, () => {
         this.instance = 'https://api.screwdriver.cd';
         this.branchName = 'testBranch';
         this.repoOrg = 'screwdriver-cd-test';
         this.repoName = 'functional-git';
-        this.pipelineId = '2e0138dfa7c4ff83720dc0cd510d2252a3398fc3';
+        this.pipelineId = '2e0138dfa7c4ff83720dc0cd510d2252a3398fc3';  // TODO: determine dynamically
 
         // Github operations require
         github.authenticate({
