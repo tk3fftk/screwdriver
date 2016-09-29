@@ -2,11 +2,10 @@
 const Assert = require('chai').assert;
 const Github = require('github');
 const github = new Github();
-const request = require('./request');
+const request = require('../support/request');
 
 const MAX_CONTENT_LENGTH = 354;
 const MAX_FILENAME_LENGTH = 17;
-const MAX_PAGE_COUNT = 50;
 
 /**
  * Creates a string of a given length with random alphanumeric characters
@@ -125,9 +124,12 @@ function searchForBuild(instance, pipelineId, pullRequestNumber) {
     .then((response) => {
         const jobData = response.body;
         const result = jobData.filter((job) => job.name === `PR-${pullRequestNumber}`);
+<<<<<<< HEAD
 
         console.log('result: ', result);
 
+=======
+>>>>>>> 3f772f6dc471f82ccdd8869295e878fa1de3f806
         const jobId = result[0].id;
 
         return request({
@@ -179,23 +181,19 @@ function cleanUpRepository(orgName, repoName, testBranchName) {
     };
 
     return github.gitdata.getReference(branchParams)
-        .then((response) => {
-            console.log(response);
-
-            return github.gitdata.deleteReference(branchParams);
-        }, () => {})
-        .then(() => {});
+        .then(() => github.gitdata.deleteReference(branchParams), () => {});
 }
 
 module.exports = function server() {
     // eslint-disable-next-line new-cap
-    this.Before(() => {
-        console.log('brefore');
+    this.Before({
+        tags: ['@gitflow']
+    }, () => {
         this.instance = 'https://api.screwdriver.cd';
         this.branchName = 'testBranch';
         this.repoOrg = 'screwdriver-cd-test';
         this.repoName = 'functional-git';
-        this.pipelineId = '2e0138dfa7c4ff83720dc0cd510d2252a3398fc3';
+        this.pipelineId = '2e0138dfa7c4ff83720dc0cd510d2252a3398fc3';  // TODO: determine dynamically
 
         // Github operations require
         github.authenticate({
@@ -210,7 +208,6 @@ module.exports = function server() {
             json: true
         }).then((response) => {
             this.jwt = response.body.token;
-        // });
         }).then(() =>
             cleanUpRepository(this.repoOrg, this.repoName, this.branchName)
         );
@@ -320,8 +317,6 @@ module.exports = function server() {
         .then(() => waitForBuild(this.instance, this.pipelineId, this.pullRequestNumber))
         .then((data) => {
             const build = data.body[0];
-
-            console.log('status: ', build.status);
 
             Assert.oneOf(build.status, ['QUEUED', 'RUNNING', 'SUCCESS']);
 
