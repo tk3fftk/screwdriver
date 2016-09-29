@@ -105,55 +105,53 @@ function promiseToWait(timeToWait) {
 }
 
 /**
- * Search for a build that is executing against a specific SHA
+ * Search for a build that is running in the PR
  * @method searchForBuild
- * @param  {String}       screwdriverInstance  Specific screwdriver instance to query against
- * @param  {String}       desiredSha           The SHA that the build is using
- * @param  {Number}       [pageNumber]         Some page number
+ * @param  {String}       instance          Specific screwdriver instance to query against
+ * @param  {String}       pipelineId        Pipeline ID
+ * @param  {Number}       pullRequestNumber Pull request number
  * @return {Promise}
  */
-function searchForBuild(screwdriverInstance, desiredSha, pageNumber) {
-    const pageCounter = pageNumber || 1;
-
+function searchForBuild(instance, pipelineId, pullRequestNumber) {
     console.log('    (...searching for build...)');
 
     return request({
         json: true,
         method: 'GET',
-        uri: `${screwdriverInstance}/v4/builds?page=${pageCounter}&count=${MAX_PAGE_COUNT}`
+        uri: `${instance}/v4/pipelines/${pipelineId}/jobs`
     })
     .then((response) => {
-        const buildData = response.body;
-        const result = buildData.filter((build) => build.sha === desiredSha);
+        const jobData = response.body;
+        const result = jobData.filter((job) => job.name === `PR-${pullRequestNumber}`);
+        const jobId = result[0].id;
 
-        if (buildData.length === MAX_PAGE_COUNT) {
-            console.log('    (...looking for more builds...)');
-            return searchForBuild(screwdriverInstance, desiredSha, pageCounter + 1)
-            .then((nextPage) => result.concat(nextPage));
-        }
-
-        return result;
+        return request({
+            json: true,
+            method: 'GET',
+            uri: `${instance}/v4/jobs/${jobId}/builds`
+        });
     });
 }
 
 /**
- * Perisistently ping the API until the build data is available
+ * Persistently ping the API until the build data is available
  * @method waitForBuild
- * @param  {String}     screwdriverInstance  Specific Screwdriver instance to query against
- * @param  {String}       desiredSha         The SHA that the build is using
+ * @param  {String}     instance          Specific Screwdriver instance to query against
+ * @param  {String}     pipelineId        Pipeline ID
+ * @param  {Number}     pullRequestNumber Pull request number
  * @return {Promise}
  */
-function waitForBuild(screwdriverInstance, desiredSha) {
+function waitForBuild(instance, pipelineId, pullRequestNumber) {
     console.log('    (Waiting for build to exist....)');
 
-    return searchForBuild(screwdriverInstance, desiredSha)
+    return searchForBuild(instance, pipelineId, pullRequestNumber)
     .then((buildData) => {
         if (buildData.length !== 0) {
             return buildData;
         }
 
         return promiseToWait(3)
-            .then(() => searchForBuild(screwdriverInstance, desiredSha));
+            .then(() => searchForBuild(instance, pipelineId, pullRequestNumber));
     });
 }
 
@@ -188,6 +186,7 @@ module.exports = function server() {
         this.branchName = 'testBranch';
         this.repoOrg = 'screwdriver-cd-test';
         this.repoName = 'functional-git';
+        this.pipelineId = '2e0138dfa7c4ff83720dc0cd510d2252a3398fc3';
 
         // Github operations require
         github.authenticate({
@@ -241,8 +240,8 @@ module.exports = function server() {
         return createBranch(token, branchName, this.repoOrg, this.repoName)
             .then(() => createFile(token, branchName, this.repoOrg, this.repoName))
             .then(() => github.pullRequests.create({
-                user: this.repositoryOwner,
-                repo: this.repository,
+                user: this.repoOrg,
+                repo: this.repoName,
                 title: '[DNM] testing',
                 head: this.testBranch,
                 base: 'master'
@@ -285,8 +284,8 @@ module.exports = function server() {
         });
 
         return github.pullRequests.update({
-            user: this.repositoryOwner,
-            repo: this.repository,
+            user: this.repoOrg,
+            repo: this.repoName,
             number: this.pullRequestNumber,
             state: 'closed'
         });
@@ -307,9 +306,9 @@ module.exports = function server() {
     this.Then(/^a new build from `main` should be created to test that change$/, {
         timeout: 60 * 1000
     }, () => promiseToWait(8)
-        .then(() => waitForBuild(this.instance, this.sha))
+        .then(() => waitForBuild(this.instance, this.pipelineId, this.pullRequestNumber))
         .then((data) => {
-            const build = data[0];
+            const build = data.body[0];
 
             Assert.oneOf(build.status, ['QUEUED', 'RUNNING', 'SUCCESS']);
 
@@ -341,8 +340,8 @@ module.exports = function server() {
 
     this.Then(/^the GitHub status should be updated to reflect the build's status$/, () =>
         github.repos.getCombinedStatus({
-            user: this.repositoryOwner,
-            repo: this.repository,
+            user: this.repoOrg,
+            repo: this.repoName,
             sha: this.sha
         })
         .then((data) => {
