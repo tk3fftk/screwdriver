@@ -3,6 +3,7 @@ const Assert = require('chai').assert;
 const Github = require('github');
 const github = new Github();
 const request = require('../support/request');
+const sdapi = require('../support/sdapi');
 
 const MAX_CONTENT_LENGTH = 354;
 const MAX_FILENAME_LENGTH = 17;
@@ -121,7 +122,17 @@ function searchForBuild(instance, pipelineId, pullRequestNumber) {
     })
     .then((response) => {
         const jobData = response.body;
-        const result = jobData.filter((job) => job.name === `PR-${pullRequestNumber}`);
+        let result = [];
+
+        if (pullRequestNumber) {
+            result = jobData.filter((job) => job.name === `PR-${pullRequestNumber}`);
+        } else {
+            result = jobData.filter((job) => job.name === 'main');
+        }
+
+        if (result.length === 0) {
+            return result;
+        }
 
         const jobId = result[0].id;
 
@@ -143,16 +154,17 @@ function searchForBuild(instance, pipelineId, pullRequestNumber) {
  */
 function waitForBuild(instance, pipelineId, pullRequestNumber) {
     console.log('    (Waiting for build to exist....)');
+    console.log('pipeline id:  ', pipelineId);
 
     return searchForBuild(instance, pipelineId, pullRequestNumber)
     .then((buildData) => {
         if (buildData.length !== 0) {
             return buildData;
         }
-        console.log('   (Searching for MOAR builds...)');
+        console.log('    (Searching for MOAR builds....)');
 
         return promiseToWait(3)
-            .then(() => searchForBuild(instance, pipelineId, pullRequestNumber));
+            .then(() => waitForBuild(instance, pipelineId, pullRequestNumber));
     });
 }
 
@@ -176,6 +188,7 @@ function waitForBuildAndStatus(config) {
 
             buildData.body.forEach((singleBuild, index) => {
                 if (singleBuild.sha === desiredSha && desiredStatus.includes(singleBuild.status)) {
+                    console.log('adding: ', singleBuild);
                     chosenBuild = index;
                 }
             });
@@ -186,10 +199,9 @@ function waitForBuildAndStatus(config) {
         }
 
         console.log('   (Searching through MOAR builds...)');
+        console.log(buildData);
 
-        return promiseToWait(3)
-        .then(() => searchForBuild(config.instance, config.pipelineId, config.pullRequestNumber))
-        .then(() => waitForBuildAndStatus(config));
+        return promiseToWait(3).then(() => waitForBuildAndStatus(config));
     });
 }
 
@@ -218,7 +230,7 @@ module.exports = function server() {
         tags: ['@gitflow']
     }, () => {
         this.instance = 'https://api.screwdriver.cd';
-        this.branchName = 'testBranch';
+        this.branchName = 'darrenBranch';
         this.repoOrg = 'screwdriver-cd-test';
         this.repoName = 'functional-git';
         this.pipelineId = '2e0138dfa7c4ff83720dc0cd510d2252a3398fc3';  // TODO: determine dynamically
@@ -310,25 +322,66 @@ module.exports = function server() {
 
     this.When(/^it is targeting the pipeline's branch$/, () => null);
 
-    this.When(/^the pull request is closed$/, () => {
+    this.When(/^the pull request is closed$/, {
+        timeout: 60 * 1000
+    }, () => {
         // Closing a PR requires authentication
         github.authenticate({
             type: 'oauth',
             token: this.github_token
         });
 
-        return github.pullRequests.update({
-            user: this.repoOrg,
-            repo: this.repoName,
-            number: this.pullRequestNumber,
-            state: 'closed'
+        // Wait for the build to be enabled before moving forward
+
+        return promiseToWait(3)
+        .then(() => {
+            console.log('ok');
+            console.log({
+                instance: this.instance,
+                pipelineId: this.pipelineId,
+                pullRequestNumber: this.pullRequestNumber,
+                sha: this.sha,
+                desiredStatus: ['RUNNING', 'SUCCESS', 'FAILURE']
+            });
+
+            return waitForBuildAndStatus({
+                instance: this.instance,
+                pipelineId: this.pipelineId,
+                pullRequestNumber: this.pullRequestNumber,
+                sha: this.sha,
+                desiredStatus: ['RUNNING', 'SUCCESS', 'FAILURE']
+            });
+        }).then((buildData) => {
+            this.previousBuildId = buildData.id;
+        }).then(() => {
+            return github.pullRequests.update({
+                user: this.repoOrg,
+                repo: this.repoName,
+                number: this.pullRequestNumber,
+                state: 'closed'
+            });
         });
     });
 
-    this.When(/^new changes are pushed to that pull request$/, () => {
+    this.When(/^new changes are pushed to that pull request$/, {
+        timeout: 30 * 1000
+    }, () => {
         console.log();
 
-        return createFile(this.github_token, this.branchName, this.repoOrg, this.repoName);
+        // Find & save the previous build
+        return promiseToWait(3)
+        .then(() => {
+            return waitForBuildAndStatus({
+                instance: this.instance,
+                pipelineId: this.pipelineId,
+                pullRequestNumber: this.pullRequestNumber,
+                sha: this.sha,
+                desiredStatus: ['QUEUED', 'RUNNING', 'SUCCESS', 'FAILURE']
+            }).then((buildData) => {
+                this.previousBuildId = buildData.id;
+            });
+        })
+        .then(() => createFile(this.github_token, this.branchName, this.repoOrg, this.repoName));
     });
 
     this.When(/^a new commit is pushed$/, () => null);
@@ -344,6 +397,8 @@ module.exports = function server() {
     }, () => promiseToWait(8)
         .then(() => waitForBuild(this.instance, this.pipelineId, this.pullRequestNumber))
         .then((data) => {
+            console.log(data);
+
             const build = data.body[0];
 
             Assert.oneOf(build.status, ['QUEUED', 'RUNNING', 'SUCCESS']);
@@ -369,15 +424,11 @@ module.exports = function server() {
     }, () => {
         const desiredStatus = ['ABORTED', 'SUCCESS'];
 
-        return promiseToWait(10)
-        .then(() => waitForBuildAndStatus({
+        return sdapi.waitForBuildStatus({
+            buildId: this.previousBuildId,
             instance: this.instance,
-            pipelineId: this.pipelineId,
-            pullRequestNumber: this.pullRequestNumber,
-            sha: this.sha,
             desiredStatus
-        }))
-        .then((buildData) => {
+        }).then((buildData) => {
             // TODO: save the status so the next step can verify the github status
 
             Assert.oneOf(buildData.status, desiredStatus);
