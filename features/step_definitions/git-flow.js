@@ -105,51 +105,6 @@ function promiseToWait(timeToWait) {
 }
 
 /**
- * Persistently ping the API until the build data is available
- * @method waitForBuild
- * @param  {String}     instance          Specific Screwdriver instance to query against
- * @param  {String}     pipelineId        Pipeline ID
- * @param  {Number}     pullRequestNumber Pull request number
- * @return {Promise}
- */
-function waitForBuild(instance, pipelineId, pullRequestNumber) {
-    console.log('    (Waiting for build to exist....)');
-    console.log('pipeline id:  ', pipelineId);
-
-    return sdapi.searchForBuild({
-        instance,
-        pipelineId,
-        pullRequestNumber
-    }).then((buildData) => {
-        if (buildData.length !== 0) {
-            return buildData;
-        }
-        console.log('    (Searching for MOAR builds....)');
-
-        return promiseToWait(3)
-            .then(() => waitForBuild(instance, pipelineId, pullRequestNumber));
-    });
-}
-
-/**
- * Look for a specific build. Wait until the build reaches the desired status
- * @method waitForBuildAndStatus
- * @return {[type]}              [description]
- */
-function waitForBuildAndStatus(config) {
-    const desiredSha = config.sha;
-    const desiredStatus = config.desiredStatus;
-
-    return sdapi.searchForBuild({
-        instance: config.instance,
-        pipelineId: config.pipelineId,
-        pullRequestNumber: config.pullRequestNumber,
-        desiredSha,
-        desiredStatus
-    });
-}
-
-/**
  * [cleanUpRepository description]
  * @method cleanUpRepository
  * @param  {[type]}          orgName     [description]
@@ -291,7 +246,7 @@ module.exports = function server() {
                 desiredStatus: ['RUNNING', 'SUCCESS', 'FAILURE']
             });
 
-            return waitForBuildAndStatus({
+            return sdapi.searchForBuild({
                 instance: this.instance,
                 pipelineId: this.pipelineId,
                 pullRequestNumber: this.pullRequestNumber,
@@ -318,7 +273,7 @@ module.exports = function server() {
         // Find & save the previous build
         return promiseToWait(3)
         .then(() => {
-            return waitForBuildAndStatus({
+            return sdapi.searchForBuild({
                 instance: this.instance,
                 pipelineId: this.pipelineId,
                 pullRequestNumber: this.pullRequestNumber,
@@ -345,7 +300,11 @@ module.exports = function server() {
         timeout: 60 * 1000
     }, () => {
         return promiseToWait(8)
-        .then(() => waitForBuild(this.instance, this.pipelineId, this.pullRequestNumber))
+        .then(() => sdapi.searchForBuild({
+            instance: this.instance,
+            pipelineId: this.pipelineId,
+            pullRequestNumber: this.pullRequestNumber
+        }))
         .then((data) => {
             const build = data;
 
