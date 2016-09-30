@@ -105,46 +105,6 @@ function promiseToWait(timeToWait) {
 }
 
 /**
- * Search for a build that is running in the PR
- * @method searchForBuild
- * @param  {String}       instance          Specific screwdriver instance to query against
- * @param  {String}       pipelineId        Pipeline ID
- * @param  {Number}       pullRequestNumber Pull request number
- * @return {Promise}
- */
-function searchForBuild(instance, pipelineId, pullRequestNumber) {
-    console.log('    (...searching for build...)');
-
-    return request({
-        json: true,
-        method: 'GET',
-        uri: `${instance}/v4/pipelines/${pipelineId}/jobs`
-    })
-    .then((response) => {
-        const jobData = response.body;
-        let result = [];
-
-        if (pullRequestNumber) {
-            result = jobData.filter((job) => job.name === `PR-${pullRequestNumber}`);
-        } else {
-            result = jobData.filter((job) => job.name === 'main');
-        }
-
-        if (result.length === 0) {
-            return result;
-        }
-
-        const jobId = result[0].id;
-
-        return request({
-            json: true,
-            method: 'GET',
-            uri: `${instance}/v4/jobs/${jobId}/builds`
-        });
-    });
-}
-
-/**
  * Persistently ping the API until the build data is available
  * @method waitForBuild
  * @param  {String}     instance          Specific Screwdriver instance to query against
@@ -156,8 +116,11 @@ function waitForBuild(instance, pipelineId, pullRequestNumber) {
     console.log('    (Waiting for build to exist....)');
     console.log('pipeline id:  ', pipelineId);
 
-    return searchForBuild(instance, pipelineId, pullRequestNumber)
-    .then((buildData) => {
+    return sdapi.searchForBuild({
+        instance,
+        pipelineId,
+        pullRequestNumber
+    }).then((buildData) => {
         if (buildData.length !== 0) {
             return buildData;
         }
@@ -177,31 +140,12 @@ function waitForBuildAndStatus(config) {
     const desiredSha = config.sha;
     const desiredStatus = config.desiredStatus;
 
-    return searchForBuild(config.instance, config.pipelineId, config.pullRequestNumber)
-    .then((buildData) => {
-        if (buildData.length !== 0) {
-            if (!desiredSha) {  // default is the first one
-                return buildData.body[0];
-            }
-
-            let chosenBuild = -1;
-
-            buildData.body.forEach((singleBuild, index) => {
-                if (singleBuild.sha === desiredSha && desiredStatus.includes(singleBuild.status)) {
-                    console.log('adding: ', singleBuild);
-                    chosenBuild = index;
-                }
-            });
-
-            if (chosenBuild >= 0) {
-                return buildData.body[chosenBuild];
-            }
-        }
-
-        console.log('   (Searching through MOAR builds...)');
-        console.log(buildData);
-
-        return promiseToWait(3).then(() => waitForBuildAndStatus(config));
+    return sdapi.searchForBuild({
+        instance: config.instance,
+        pipelineId: config.pipelineId,
+        pullRequestNumber: config.pullRequestNumber,
+        desiredSha,
+        desiredStatus
     });
 }
 
@@ -234,6 +178,9 @@ module.exports = function server() {
         this.repoOrg = 'screwdriver-cd-test';
         this.repoName = 'functional-git';
         this.pipelineId = '2e0138dfa7c4ff83720dc0cd510d2252a3398fc3';  // TODO: determine dynamically
+
+        // Reset shared information
+        this.pullRequestNumber = null;
 
         // Github operations require
         github.authenticate({
@@ -378,6 +325,8 @@ module.exports = function server() {
                 sha: this.sha,
                 desiredStatus: ['QUEUED', 'RUNNING', 'SUCCESS', 'FAILURE']
             }).then((buildData) => {
+                console.log(buildData);
+
                 this.previousBuildId = buildData.id;
             });
         })
@@ -394,18 +343,17 @@ module.exports = function server() {
 
     this.Then(/^a new build from `main` should be created to test that change$/, {
         timeout: 60 * 1000
-    }, () => promiseToWait(8)
+    }, () => {
+        return promiseToWait(8)
         .then(() => waitForBuild(this.instance, this.pipelineId, this.pullRequestNumber))
         .then((data) => {
-            console.log(data);
-
-            const build = data.body[0];
+            const build = data;
 
             Assert.oneOf(build.status, ['QUEUED', 'RUNNING', 'SUCCESS']);
 
             this.jobId = build.jobId;
-        })
-    );
+        });
+    });
 
     this.Then(/^the build should know they are in a pull request/, () =>
         request({
