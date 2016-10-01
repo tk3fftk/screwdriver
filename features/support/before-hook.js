@@ -10,7 +10,7 @@ function beforeHooks() {
     this.Before((scenario, cb) => {
         this.accessKey = config.access_key || process.env.ACCESS_KEY;
         this.username = config.username || process.env.USER_NAME;
-        this.github_token = config.github_token || process.env.ACCESS_TOKEN;
+        this.gitToken = config.gitToken || process.env.ACCESS_TOKEN;
         cb();
     });
 }

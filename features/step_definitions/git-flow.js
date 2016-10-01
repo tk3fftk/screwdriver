@@ -1,96 +1,8 @@
 'use strict';
 const Assert = require('chai').assert;
-const Github = require('github');
-const github = new Github();
 const request = require('../support/request');
 const sdapi = require('../support/sdapi');
-
-const MAX_CONTENT_LENGTH = 354;
-const MAX_FILENAME_LENGTH = 17;
-
-/**
- * Creates a string of a given length with random alphanumeric characters
- * @method randomString
- * @param  {Number}     stringLength  Length of the string
- * @return {String}                   A string consisting of random characters
- */
-function randomString(stringLength) {
-    let content = '';
-    const alphanumeric = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-
-    for (let i = 0; i < stringLength; i++) {
-        content += alphanumeric.charAt(Math.floor(Math.random() * alphanumeric.length));
-    }
-
-    return content;
-}
-
-/**
- * Create a branch on the given repository
- * @method createBranch
- * @param  {String}     token              Github token
- * @param  {String}     branchName         Name of the branch to create
- * @param  {String}     [repositoryOwner]  Owner of the repository
- * @param  {String}     [repositoryName]   Name of the repository
- * @return {Promise}
- */
-function createBranch(token, branchName, repositoryOwner, repositoryName) {
-    const user = repositoryOwner || 'screwdriver-cd';
-    const repo = repositoryName || 'garbage-repository-ignore-this';
-
-    // Branch creation requires authentication
-    github.authenticate({
-        type: 'oauth',
-        token
-    });
-
-    // Create a branch from the tip of the master branch
-    return github.gitdata.getReference({
-        user,
-        repo,
-        ref: 'heads/master'
-    })
-    .then((referenceData) => {
-        const sha = referenceData.object.sha;
-
-        return github.gitdata.createReference({
-            user,
-            repo,
-            ref: `refs/heads/${branchName}`,
-            sha
-        });
-    });
-}
-
-/**
- * Creates a random file, with a random content.
- * @method createFile
- * @param  {String}   token              Github token
- * @param  {String}   branch             The branch to create the file in
- * @param  {String}   repositoryOwner    Owner of the repository
- * @param  {String}   repositoryName     Name of the repository
- * @return {Promise}
- */
-function createFile(token, branch, repositoryOwner, repositoryName) {
-    const content = new Buffer(randomString(MAX_CONTENT_LENGTH));
-    const filename = randomString(MAX_FILENAME_LENGTH);
-    const repo = repositoryName;
-    const user = repositoryOwner;
-
-    github.authenticate({
-        type: 'oauth',
-        token
-    });
-
-    return github.repos.createFile({
-        user,
-        repo,
-        path: filename,
-        message: (new Date()).toString(),    // commit message is the current time
-        content: content.toString('base64'), // content needs to be transmitted in base64
-        branch
-    });
-}
+const github = require('../support/github');
 
 /**
  * Promise to wait a certain number of seconds
@@ -104,44 +16,20 @@ function promiseToWait(timeToWait) {
     });
 }
 
-/**
- * [cleanUpRepository description]
- * @method cleanUpRepository
- * @param  {[type]}          orgName     [description]
- * @param  {[type]}          repoName    [description]
- * @param  {[type]}          testBranch  [description]
- * @return {[type]}                      [description]
- */
-function cleanUpRepository(orgName, repoName, testBranchName) {
-    const branchParams = {
-        user: orgName,
-        repo: repoName,
-        ref: `heads/${testBranchName}`
-    };
-
-    return github.gitdata.getReference(branchParams)
-        .then(() => github.gitdata.deleteReference(branchParams), () => {});
-}
-
 module.exports = function server() {
     // eslint-disable-next-line new-cap
     this.Before({
-        tags: ['@gitflow']
+        tags: ['@gitflow'],
+        timeout: 60000
     }, () => {
         this.instance = 'https://api.screwdriver.cd';
-        this.branchName = 'darrenBranch';
+        this.branch = 'darrenBranch';
         this.repoOrg = 'screwdriver-cd-test';
         this.repoName = 'functional-git';
         this.pipelineId = '2e0138dfa7c4ff83720dc0cd510d2252a3398fc3';  // TODO: determine dynamically
 
         // Reset shared information
         this.pullRequestNumber = null;
-
-        // Github operations require
-        github.authenticate({
-            type: 'oauth',
-            token: this.github_token
-        });
 
         return request({  // TODO : perform this in the before-hook for all func tests
             method: 'GET',
@@ -151,7 +39,8 @@ module.exports = function server() {
         }).then((response) => {
             this.jwt = response.body.token;
         }).then(() =>
-            cleanUpRepository(this.repoOrg, this.repoName, this.branchName)
+            github.cleanUpRepository(this.gitToken, this.branch, this.repoOrg,
+                this.repoName)
         );
     });
 
@@ -177,19 +66,13 @@ module.exports = function server() {
     );
 
     this.Given(/^an existing pull request targeting the pipeline's branch$/, () => {
-        const branchName = this.branchName;
-        const token = this.github_token;
+        const branch = this.branch;
+        const token = this.gitToken;
 
-        return createBranch(token, branchName, this.repoOrg, this.repoName)
-            .then(() => createFile(token, branchName, this.repoOrg, this.repoName))
+        return github.createBranch(token, branch, this.repoOrg, this.repoName)
+            .then(() => github.createFile(token, branch, this.repoOrg, this.repoName))
             .then(() =>
-                github.pullRequests.create({
-                    user: this.repoOrg,
-                    repo: this.repoName,
-                    title: '[DNM] testing',
-                    head: branchName,
-                    base: 'master'
-                })
+                github.createPullRequest(token, branch, this.repoOrg, this.repoName)
             )
             .then((data) => {
                 this.pullRequestNumber = data.number;
@@ -202,19 +85,13 @@ module.exports = function server() {
     });
 
     this.When(/^a pull request is opened$/, () => {
-        const branchName = this.branchName;
-        const token = this.github_token;
+        const branch = this.branch;
+        const token = this.gitToken;
 
-        return createBranch(token, branchName, this.repoOrg, this.repoName)
-            .then(() => createFile(token, branchName, this.repoOrg, this.repoName))
+        return github.createBranch(token, branch, this.repoOrg, this.repoName)
+            .then(() => github.createFile(token, branch, this.repoOrg, this.repoName))
             .then(() =>
-                github.pullRequests.create({
-                    user: this.repoOrg,
-                    repo: this.repoName,
-                    title: '[DNM] testing',
-                    head: branchName,
-                    base: 'master'
-                })
+                github.createPullRequest(token, branch, this.repoOrg, this.repoName)
             )
             .then((data) => {
                 this.pullRequestNumber = data.number;
@@ -227,12 +104,6 @@ module.exports = function server() {
     this.When(/^the pull request is closed$/, {
         timeout: 60 * 1000
     }, () => {
-        // Closing a PR requires authentication
-        github.authenticate({
-            type: 'oauth',
-            token: this.github_token
-        });
-
         // Wait for the build to be enabled before moving forward
 
         return promiseToWait(3)
@@ -255,21 +126,14 @@ module.exports = function server() {
             });
         }).then((buildData) => {
             this.previousBuildId = buildData.id;
-        }).then(() => {
-            return github.pullRequests.update({
-                user: this.repoOrg,
-                repo: this.repoName,
-                number: this.pullRequestNumber,
-                state: 'closed'
-            });
-        });
+        }).then(() => github.closePullRequest(this.gitToken, this.repoOrg, this.repoOwner,
+                this.pullRequestNumber)
+        );
     });
 
     this.When(/^new changes are pushed to that pull request$/, {
         timeout: 30 * 1000
     }, () => {
-        console.log();
-
         // Find & save the previous build
         return promiseToWait(3)
         .then(() => {
@@ -285,7 +149,8 @@ module.exports = function server() {
                 this.previousBuildId = buildData.id;
             });
         })
-        .then(() => createFile(this.github_token, this.branchName, this.repoOrg, this.repoName));
+        .then(() => github.createFile(this.gitToken, this.branch, this.repoOrg,
+            this.repoName));
     });
 
     this.When(/^a new commit is pushed$/, () => null);
@@ -293,7 +158,7 @@ module.exports = function server() {
     this.When(/^it is against the pipeline's branch$/, () => {
         this.testBranch = 'master';
 
-        return createFile(this.github_token, this.testBranch, this.repoOrg, this.repoName);
+        return github.createFile(this.gitToken, this.testBranch, this.repoOrg, this.repoName);
     });
 
     this.Then(/^a new build from `main` should be created to test that change$/, {
@@ -343,11 +208,7 @@ module.exports = function server() {
     });
 
     this.Then(/^the GitHub status should be updated to reflect the build's status$/, () =>
-        github.repos.getCombinedStatus({
-            user: this.repoOrg,
-            repo: this.repoName,
-            sha: this.sha
-        })
+        github.getStatus(this.gitToken, this.repoOrg, this.repoName, this.sha)
         .then((data) => {
             Assert.oneOf(data.state, ['success', 'pending']);
         })
