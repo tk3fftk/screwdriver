@@ -103,55 +103,41 @@ module.exports = function server() {
 
     this.When(/^the pull request is closed$/, {
         timeout: 60 * 1000
-    }, () => {
-        // Wait for the build to be enabled before moving forward
-
-        return promiseToWait(3)
-        .then(() => {
-            console.log('ok');
-            console.log({
+    }, () =>
+        promiseToWait(3)  // Wait for the build to be enabled before moving forward
+        .then(() =>
+            sdapi.searchForBuild({
                 instance: this.instance,
                 pipelineId: this.pipelineId,
                 pullRequestNumber: this.pullRequestNumber,
                 sha: this.sha,
                 desiredStatus: ['RUNNING', 'SUCCESS', 'FAILURE']
-            });
-
-            return sdapi.searchForBuild({
-                instance: this.instance,
-                pipelineId: this.pipelineId,
-                pullRequestNumber: this.pullRequestNumber,
-                sha: this.sha,
-                desiredStatus: ['RUNNING', 'SUCCESS', 'FAILURE']
-            });
-        }).then((buildData) => {
+            })
+        ).then((buildData) => {
             this.previousBuildId = buildData.id;
         }).then(() => github.closePullRequest(this.gitToken, this.repoOrg, this.repoOwner,
                 this.pullRequestNumber)
-        );
-    });
+        )
+    );
 
     this.When(/^new changes are pushed to that pull request$/, {
         timeout: 30 * 1000
-    }, () => {
-        // Find & save the previous build
-        return promiseToWait(3)
-        .then(() => {
-            return sdapi.searchForBuild({
+    }, () =>
+        promiseToWait(3)  // Find & save the previous build
+        .then(() =>
+            sdapi.searchForBuild({
                 instance: this.instance,
                 pipelineId: this.pipelineId,
                 pullRequestNumber: this.pullRequestNumber,
                 sha: this.sha,
                 desiredStatus: ['QUEUED', 'RUNNING', 'SUCCESS', 'FAILURE']
             }).then((buildData) => {
-                console.log(buildData);
-
                 this.previousBuildId = buildData.id;
-            });
-        })
+            })
+        )
         .then(() => github.createFile(this.gitToken, this.branch, this.repoOrg,
-            this.repoName));
-    });
+            this.repoName))
+    );
 
     this.When(/^a new commit is pushed$/, () => null);
 
@@ -163,8 +149,8 @@ module.exports = function server() {
 
     this.Then(/^a new build from `main` should be created to test that change$/, {
         timeout: 60 * 1000
-    }, () => {
-        return promiseToWait(8)
+    }, () =>
+        promiseToWait(8)
         .then(() => sdapi.searchForBuild({
             instance: this.instance,
             pipelineId: this.pipelineId,
@@ -176,8 +162,8 @@ module.exports = function server() {
             Assert.oneOf(build.status, ['QUEUED', 'RUNNING', 'SUCCESS']);
 
             this.jobId = build.jobId;
-        });
-    });
+        })
+    );
 
     this.Then(/^the build should know they are in a pull request/, () =>
         request({

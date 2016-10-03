@@ -27,8 +27,6 @@ function findBuilds(config) {
     const pipelineId = config.pipelineId;
     const pullRequestNumber = config.pullRequestNumber;
 
-    console.log('config', config);
-
     return request({
         json: true,
         method: 'GET',
@@ -76,9 +74,7 @@ function searchForBuild(config) {
         pipelineId,
         pullRequestNumber
     }).then((buildData) => {
-        let result = buildData.body;
-
-        console.log(result);
+        let result = buildData.body || [];
 
         if (desiredSha) {
             result = result.filter((item) => item.sha === desiredSha);
@@ -113,8 +109,6 @@ function waitForBuildStatus(config) {
         uri: `${instance}/v4/builds/${buildId}`
     }).then((response) => {
         const buildData = response.body;
-
-        console.log(buildData);
 
         if (desiredStatus.includes(buildData.status)) {
             return buildData;
