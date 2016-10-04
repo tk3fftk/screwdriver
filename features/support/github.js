@@ -58,6 +58,12 @@ function cleanUpRepository(token, branch, repoOwner, repoName) {
  * @return {Promise}
  */
 function closePullRequest(token, repoOwner, repoName, prNumber) {
+    // Github operations require
+    github.authenticate({
+        type: 'oauth',
+        token
+    });
+
     return github.pullRequests.update({
         user: repoOwner,
         repo: repoName,
@@ -115,8 +121,6 @@ function createBranch(token, branch, repoOwner, repoName) {
 function createFile(token, branch, repoOwner, repoName) {
     const content = new Buffer(randomString(MAX_CONTENT_LENGTH));
     const filename = randomString(MAX_FILENAME_LENGTH);
-    const repo = repoName;
-    const user = repoOwner;
 
     github.authenticate({
         type: 'oauth',
@@ -124,8 +128,8 @@ function createFile(token, branch, repoOwner, repoName) {
     });
 
     return github.repos.createFile({
-        user,
-        repo,
+        user: repoOwner,
+        repo: repoName,
         path: filename,
         message: (new Date()).toString(),    // commit message is the current time
         content: content.toString('base64'), // content needs to be transmitted in base64
@@ -143,17 +147,14 @@ function createFile(token, branch, repoOwner, repoName) {
  * @return {Promise}
  */
 function createPullRequest(token, branch, repoOwner, repoName) {
-    const repo = repoName;
-    const user = repoOwner;
-
     github.authenticate({
         type: 'oauth',
         token
     });
 
     return github.pullRequests.create({
-        user,
-        repo,
+        user: repoOwner,
+        repo: repoName,
         title: '[DNM] testing',
         head: branch,
         base: 'master'

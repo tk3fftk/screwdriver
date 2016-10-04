@@ -4,11 +4,6 @@ const request = require('../support/request');
 const jwt = require('jsonwebtoken');
 
 module.exports = function server() {
-    // eslint-disable-next-line new-cap
-    this.Before(() => {
-        this.accessKey = process.env.ACCESS_KEY;
-    });
-
     this.Given(/^an existing repository with these users and permissions:$/, (table) => table);
 
     this.Given(/^an existing pipeline with that repository$/, () => null);
