@@ -97,7 +97,7 @@
     "cucumber": "^1.0.0",
     "eslint": "^3.2.2",
     "eslint-config-screwdriver": "^2.0.0",
-    "github": "^6.0.1",
+    "github": "^6.0.2",
     "jenkins-mocha": "^3.0.0",
     "mockery": "^2.0.0",
     "nock": "^9.0.0",
