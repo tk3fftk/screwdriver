@@ -42,7 +42,6 @@ defineSupportCode(({ Before, Given, When, Then }) => {
                 return this.getPipeline(this.pipelineId);
             })
             .then((response) => {
-                console.log(JSON.stringify(response));
                 const expectedJobs = table.hashes();
                 console.log(expectedJobs);
 
